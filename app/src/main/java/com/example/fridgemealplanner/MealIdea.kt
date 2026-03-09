@@ -4,5 +4,6 @@ data class MealIdea(
     val name: String,
     val ingredients: List<String>,
     val type: String,
-    val healthy: Boolean = true
-)
+    val highProtein: Boolean = false,
+    val lowCarb: Boolean = false,
+    val vegetarian: Boolean = false
