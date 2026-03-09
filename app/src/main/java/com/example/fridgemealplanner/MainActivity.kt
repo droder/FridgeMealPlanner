@@ -1,5 +1,6 @@
 package com.example.fridgemealplanner
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,133 +18,250 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                FridgeMealPlannerApp()
+                FridgeMealPlannerApp(context = applicationContext)
             }
         }
     }
 }
 
-@Composable
-fun FridgeMealPlannerApp() {
-    var foodInput by remember { mutableStateOf("") }
-    var fridgeItems by remember { mutableStateOf(listOf<String>()) }
-    var mealIdeas by remember { mutableStateOf(listOf<MealIdea>()) }
+data class PlannedMeal(
+    val day: Int,
+    val mealType: String,
+    val meal: MealIdea,
+    val owned: List<String>,
+    val missing: List<String>
+)
 
-    fun generateMealIdeas() {
-        mealIdeas = RecipeRepository.recipes
-            .map { recipe ->
-                recipe to recipe.ingredients.count { ingredient ->
-                    fridgeItems.contains(ingredient)
+private const val PREFS_NAME = "fridge_meal_planner"
+private const val KEY_FRIDGE_ITEMS = "fridge_items"
+
+private fun saveFridgeItems(context: Context, items: List<String>) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putString(KEY_FRIDGE_ITEMS, items.joinToString("||"))
+        .apply()
+}
+
+private fun loadFridgeItems(context: Context): List<String> {
+    val saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(KEY_FRIDGE_ITEMS, "")
+        .orEmpty()
+
+    if (saved.isBlank()) return emptyList()
+
+    return saved.split("||")
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+}
+
+private fun filterRecipes(
+    highProtein: Boolean,
+    lowCarb: Boolean,
+    vegetarian: Boolean
+): List<MealIdea> {
+    return RecipeRepository.recipes.filter { recipe ->
+        (!highProtein || recipe.highProtein) &&
+        (!lowCarb || recipe.lowCarb) &&
+        (!vegetarian || recipe.vegetarian)
+    }
+}
+
+private fun buildMealPlan(
+    fridgeItems: List<String>,
+    recipes: List<MealIdea>
+): Pair<List<PlannedMeal>, List<String>> {
+    val normalizedFridge = fridgeItems.map { it.lowercase() }
+    val mealTypes = listOf("Breakfast", "Lunch", "Dinner")
+    val plan = mutableListOf<PlannedMeal>()
+    val groceryList = linkedSetOf<String>()
+
+    for (day in 1..7) {
+        for (mealType in mealTypes) {
+            val candidates = recipes
+                .filter { it.type == mealType }
+                .sortedByDescending { recipe ->
+                    recipe.ingredients.count { ingredient ->
+                        normalizedFridge.contains(ingredient.lowercase())
+                    }
                 }
+
+            val chosen = candidates.firstOrNull() ?: continue
+            val owned = chosen.ingredients.filter { ingredient ->
+                normalizedFridge.contains(ingredient.lowercase())
             }
-            .filter { it.second > 0 }
-            .sortedByDescending { it.second }
-            .map { it.first }
+            val missing = chosen.ingredients.filterNot { ingredient ->
+                normalizedFridge.contains(ingredient.lowercase())
+            }
+
+            groceryList.addAll(missing)
+            plan.add(
+                PlannedMeal(
+                    day = day,
+                    mealType = mealType,
+                    meal = chosen,
+                    owned = owned,
+                    missing = missing
+                )
+            )
+        }
+    }
+
+    return plan to groceryList.toList()
+}
+
+@Composable
+fun FridgeMealPlannerApp(context: Context) {
+    var foodInput by remember { mutableStateOf("") }
+    var fridgeItems by remember { mutableStateOf(loadFridgeItems(context)) }
+    var highProteinOnly by remember { mutableStateOf(false) }
+    var lowCarbOnly by remember { mutableStateOf(false) }
+    var vegetarianOnly by remember { mutableStateOf(false) }
+
+    val filteredRecipes = remember(highProteinOnly, lowCarbOnly, vegetarianOnly) {
+        filterRecipes(
+            highProtein = highProteinOnly,
+            lowCarb = lowCarbOnly,
+            vegetarian = vegetarianOnly
+        )
+    }
+
+    val planAndGroceries = remember(fridgeItems, filteredRecipes) {
+        buildMealPlan(fridgeItems, filteredRecipes)
+    }
+    val plannedMeals = planAndGroceries.first
+    val groceryList = planAndGroceries.second
+
+    fun persist(items: List<String>) {
+        fridgeItems = items
+        saveFridgeItems(context, items)
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text(
-                text = "Fridge Meal Planner",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Add the food you have and get healthy meal ideas.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            OutlinedTextField(
-                value = foodInput,
-                onValueChange = { foodInput = it },
-                label = { Text("Add fridge item") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Button(
-                onClick = {
-                    val item = foodInput.trim().lowercase()
-                    if (item.isNotEmpty() && !fridgeItems.contains(item)) {
-                        fridgeItems = fridgeItems + item
-                        foodInput = ""
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Add Item")
+            item {
+                Text(
+                    text = "Fridge Meal Planner",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text("Save your fridge items, filter healthy meals, and generate a 7-day meal plan.")
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text("Fridge Items", style = MaterialTheme.typography.titleMedium)
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp)
-            ) {
-                items(fridgeItems) { item ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(item)
-                        TextButton(onClick = {
-                            fridgeItems = fridgeItems - item
-                        }) {
-                            Text("Remove")
+            item {
+                OutlinedTextField(
+                    value = foodInput,
+                    onValueChange = { foodInput = it },
+                    label = { Text("Add fridge item") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        val item = foodInput.trim().lowercase()
+                        if (item.isNotEmpty() && !fridgeItems.contains(item)) {
+                            persist(fridgeItems + item)
+                            foodInput = ""
                         }
-                    }
-                    Divider()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Add Item")
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = { generateMealIdeas() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Generate Healthy Meals")
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Healthy Filters", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = highProteinOnly,
+                                onClick = { highProteinOnly = !highProteinOnly },
+                                label = { Text("High protein") }
+                            )
+                            FilterChip(
+                                selected = lowCarbOnly,
+                                onClick = { lowCarbOnly = !lowCarbOnly },
+                                label = { Text("Low carb") }
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FilterChip(
+                            selected = vegetarianOnly,
+                            onClick = { vegetarianOnly = !vegetarianOnly },
+                            label = { Text("Vegetarian") }
+                        )
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Saved Fridge Items", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (fridgeItems.isEmpty()) {
+                            Text("No items saved yet.")
+                        } else {
+                            fridgeItems.forEach { item ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(item)
+                                    TextButton(onClick = {
+                                        persist(fridgeItems - item)
+                                    }) {
+                                        Text("Remove")
+                                    }
+                                }
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                }
+            }
 
-            Text("Meal Suggestions", style = MaterialTheme.typography.titleMedium)
+            item {
+                Text("7-Day Meal Plan", style = MaterialTheme.typography.titleLarge)
+            }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            items(plannedMeals) { planned ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = "Day ${planned.day} • ${planned.mealType}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(planned.meal.name)
+                        Text("Ingredients: ${planned.meal.ingredients.joinToString(", ")}")
+                        Text("You have: ${planned.owned.joinToString(", ").ifBlank { "None" }}")
+                        Text("Missing: ${planned.missing.joinToString(", ").ifBlank { "Nothing" }}")
+                    }
+                }
+            }
 
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(mealIdeas) { meal ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = meal.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("Type: ${meal.type}")
-                            Text("Ingredients: ${meal.ingredients.joinToString(", ")}")
-                            val owned = meal.ingredients.filter { fridgeItems.contains(it) }
-                            Text("You have: ${owned.joinToString(", ")}")
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Grocery List", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (groceryList.isEmpty()) {
+                            Text("You have everything needed for the current plan.")
+                        } else {
+                            groceryList.forEach { item ->
+                                Text("• $item")
+                            }
                         }
                     }
                 }
