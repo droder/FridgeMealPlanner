@@ -7,3 +7,4 @@ data class MealIdea(
     val highProtein: Boolean = false,
     val lowCarb: Boolean = false,
     val vegetarian: Boolean = false
+)
