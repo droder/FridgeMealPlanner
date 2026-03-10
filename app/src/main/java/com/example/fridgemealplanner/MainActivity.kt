@@ -22,6 +22,8 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
