@@ -99,12 +99,14 @@ fun MainScreen(
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var detectedItems by remember { mutableStateOf(emptyList<String>()) }
     var isAnalyzing by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         selectedImageUri = uri
         detectedItems = emptyList()
+        errorMessage = null
     }
 
     val suggestions = remember(detectedItems) {
@@ -172,14 +174,32 @@ fun MainScreen(
                     val uri = selectedImageUri ?: return@Button
                     scope.launch {
                         isAnalyzing = true
-                        detectedItems = VisionHelper.detectItemsFromImage(context, uri)
-                        isAnalyzing = false
+                        errorMessage = null
+                        try {
+                            detectedItems = VisionHelper.detectItemsFromImage(context, uri)
+                            if (detectedItems.isEmpty()) {
+                                errorMessage = "Could not detect items from that photo."
+                            }
+                        } catch (e: Exception) {
+                            errorMessage = "Analysis failed."
+                        } finally {
+                            isAnalyzing = false
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = selectedImageUri != null && !isAnalyzing
             ) {
                 Text(if (isAnalyzing) "Analyzing..." else "Analyze Fridge")
+            }
+        }
+
+        if (errorMessage != null) {
+            item {
+                Text(
+                    text = errorMessage ?: "",
+                    color = MaterialTheme.colorScheme.error
+                )
             }
         }
 
